@@ -117,109 +117,84 @@ elif page == "📊 Données CSV":
     except Exception as e:
         st.error(f"❌ Erreur lors du chargement: {e}")
 
-# ==================== PAGE: Entretiens programmés ====================
-elif page == "📅 Entretiens programmés":
-    st.header("📅 Entretiens programmés (2026-2028)")
-    
-    try:
-        # Générer le calendrier des entretiens
-        with st.spinner("⏳ Génération du calendrier des entretiens..."):
-            schedule_df = create_complete_maintenance_schedule(
-                'import/MATRICE.csv',
-                'import/Param.csv',
-                2026, 2028
-            )
-        
-        st.success(f"✅ {len(schedule_df)} entretiens programmés")
-        
-        # Filters
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            selected_year = st.multiselect(
-                "Filtrer par année",
-                sorted(schedule_df['année'].unique()),
-                default=sorted(schedule_df['année'].unique())
-            )
-        
-        with col2:
-            selected_type = st.multiselect(
-                "Filtrer par type",
-                sorted(schedule_df['type_nom'].unique()),
-                default=sorted(schedule_df['type_nom'].unique())
-            )
-        
-        with col3:
-            search_matricule = st.text_input("Rechercher un matricule")
-        
-        # Apply filters
-        filtered_df = schedule_df[
-            (schedule_df['année'].isin(selected_year)) &
-            (schedule_df['type_nom'].isin(selected_type))
-        ]
-        
-        if search_matricule:
-            filtered_df = filtered_df[
-                filtered_df['matricule'].astype(str).str.contains(search_matricule, case=False, na=False)
-            ]
-        
-        # Sort by date
-        filtered_df = filtered_df.sort_values('date')
-        
-        st.subheader(f"📋 {len(filtered_df)} entretiens correspondent aux filtres")
-        
-        # Display with formatting
-        display_df = filtered_df.copy()
-        display_df['date'] = display_df['date'].astype(str)
-        display_df = display_df[['matricule', 'engin', 'date', 'année', 'type_nom', 'opération', 'intervalle_jours']]
-        display_df.columns = ['Matricule', 'Engin', 'Date', 'Année', 'Type', 'Opération', 'Intervalle (j)']
-        
-        st.dataframe(display_df, use_container_width=True, height=500)
-        
-        # Download button
-        csv_export = filtered_df.to_csv(index=False, sep=';', encoding='cp1252')
+# ==================== PAGE : Entretiens programmés (VERSION TURBO PAR ANNÉE) ====================
+elif page == "Entretiens programmés":
+    st.header("Calendrier des entretiens programmés")
+
+    # Sélection des années (tu peux cocher plusieurs)
+    années_dispo = list(range(2025, 2031))
+    années_choisies = st.multiselect(
+        "Sélectionner les années à afficher",
+        années_dispo,
+        default=[2026, 2027, 2028],
+        help="Cochez les années souhaitées – le calcul se fait à la volée !"
+    )
+
+    if not années_choisies:
+        st.info("Veuillez sélectionner au moins une année.")
+    else:
+        with st.spinner(f"Génération du calendrier pour {len(années_choisies)} année(s)..."):
+            # On génère uniquement les années demandées
+            dfs = []
+            for année in années_choisies:
+                df_année = create_complete_maintenance_schedule(
+                    start_year=année,
+                    end_year=année  # ← 1 an à la fois
+                )
+                dfs.append(df_année)
+            schedule_df = pd.concat(dfs, ignore_index=True)
+
+        st.success(f"Calendrier généré : {len(schedule_df):,} entretiens pour {len(années_choisies)} année(s)")
+
+        # Filtres classiques
+        col1, col2 = st.columns(2)
+        matricule_filter = col1.text_input("Filtrer par matricule")
+        type_filter = col2.multiselect("Filtrer par type", options=["C", "N", "CH"], default=["C", "N", "CH"])
+
+        df = schedule_df[schedule_df['type'].isin(type_filter)]
+        if matricule_filter:
+            df = df[df['matricule'].astype(str).str.contains(matricule_filter, case=False, na=False)]
+
+        # Affichage
+        aff = df[['année', 'date', 'matricule', 'engin', 'opération', 'type_nom', 'catégorie']].copy()
+        aff['date'] = pd.to_datetime(aff['date']).dt.strftime('%d/%m/%Y')
+        aff = aff.sort_values(['année', 'date'])
+
+        st.dataframe(aff, use_container_width=True, hide_index=True)
+
+        # Export
+        csv = aff.to_csv(index=False, sep=';')
         st.download_button(
-            label="💾 Télécharger le calendrier",
-            data=csv_export,
-            file_name=f"entretiens_programmes_{selected_year[0]}-{selected_year[-1]}.csv",
+            "Exporter ce calendrier (CSV)",
+            data=csv,
+            file_name=f"calendrier_entretiens_{'_'.join(map(str, sorted(années_choisies)))}.csv",
             mime="text/csv"
         )
-        
-        # Statistics
-        st.subheader("📊 Statistiques")
-        col1, col2, col3, col4 = st.columns(4)
-        
-        col1.metric("Total entretiens", len(filtered_df))
-        col2.metric("Engins concernés", filtered_df['matricule'].nunique())
-        col3.metric("Contrôles", len(filtered_df[filtered_df['type'] == 'C']))
-        col4.metric("Changements", len(filtered_df[filtered_df['type'] == 'CH']))
-        
-    except Exception as e:
-        st.error(f"❌ Erreur: {e}")
-        import traceback
-        st.text(traceback.format_exc())
 
-# ==================== PAGE: Alertes ====================
-        # ==================== PAGE : Alertes (VERSION PRO 2025) ====================
-# ==================== PAGE : Alertes (VERSION FINALE - SANS ERREUR) ====================
-elif page == "🔔 Alertes":
+elif page == "Alertes":
     st.header("Alertes de maintenance")
 
-    # Chargement unique du calendrier (première fois seulement)
-    if 'schedule_df' not in st.session_state:
-        with st.spinner("Génération du calendrier complet... (une seule fois)"):
-            st.session_state.schedule_df = create_complete_maintenance_schedule(
-                start_year=2025, end_year=2029
-            )
-        st.success("Calendrier chargé !")
+    # Choix de la fenêtre d'alertes
+    fenêtre = st.slider("Fenêtre d'alertes (jours dans le futur)", 15, 180, 90)
 
-    df = st.session_state.schedule_df.copy()
-    df['date'] = pd.to_datetime(df['date'])
-    today = pd.Timestamp.today().normalize()
+    with st.spinner("Calcul des alertes en cours..."):
+        # On génère seulement l'année en cours + l'année suivante (suffisant pour les alertes)
+        today = pd.Timestamp.today()
+        année_courante = today.year
+        année_suivante = année_courante + 1
 
-    # Seulement les interventions futures
-    alertes = df[df['date'] >= today].copy()
-    alertes['jours'] = (alertes['date'] - today).dt.days
+        df = create_complete_maintenance_schedule(
+            start_year=année_courante,
+            end_year=année_suivante
+        )
+        df['date'] = pd.to_datetime(df['date'])
+        today_norm = today.normalize()
+
+        alertes = df[df['date'] >= today_norm].copy()
+        alertes['jours'] = (alertes['date'] - today_norm).dt.days
+        alertes = alertes[alertes['jours'] <= fenêtre].sort_values('jours')
+
+        
 
     # Filtres dans la sidebar
     st.sidebar.subheader("Filtres Alertes")
